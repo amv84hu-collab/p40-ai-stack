@@ -1,0 +1,122 @@
+name: p40-ai
+
+services:
+
+  # ==========================================================
+  # COMFYUI
+  # ==========================================================
+
+  comfyui:
+    image: p40-ai-base:torch2.14-cu126
+    container_name: comfyui
+    restart: unless-stopped
+
+    ports:
+      - "${COMFYUI_PORT:-8188}:8188"
+
+    environment:
+      NVIDIA_VISIBLE_DEVICES: ${NVIDIA_VISIBLE_DEVICES:-all}
+      NVIDIA_DRIVER_CAPABILITIES: ${NVIDIA_DRIVER_CAPABILITIES:-compute,utility}
+
+      HF_HOME: /models/cache/huggingface
+      HF_HUB_CACHE: /models/cache/huggingface/hub
+      TORCH_HOME: /models/cache/torch
+
+    volumes:
+      - ${MODELS_ROOT:-/opt/ai-models}:/models
+      - ${AI_ROOT:-/opt/ai}/comfyui:/workspace/ComfyUI
+
+    gpus: all
+
+    working_dir: /workspace/ComfyUI
+
+    command: >
+      bash -c "
+      if [ ! -f /workspace/ComfyUI/main.py ]; then
+        git clone https://github.com/comfyanonymous/ComfyUI.git /workspace/ComfyUI;
+      fi &&
+      pip install --no-cache-dir -r /workspace/ComfyUI/requirements.txt &&
+      python main.py
+      --listen 0.0.0.0
+      --port 8188
+      --enable-manager
+      "
+
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8188/system_stats', timeout=5)"
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+  # ==========================================================
+  # OLLAMA
+  # ==========================================================
+
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ollama
+    restart: unless-stopped
+
+    ports:
+      - "${OLLAMA_PORT:-11434}:11434"
+
+    environment:
+      NVIDIA_VISIBLE_DEVICES: ${NVIDIA_VISIBLE_DEVICES:-all}
+      NVIDIA_DRIVER_CAPABILITIES: ${NVIDIA_DRIVER_CAPABILITIES:-compute,utility}
+      OLLAMA_HOST: ${OLLAMA_HOST:-0.0.0.0:11434}
+
+    volumes:
+      - ${AI_ROOT:-/opt/ai}/ollama:/root/.ollama
+
+    gpus: all
+
+  # ==========================================================
+  # OPEN WEBUI
+  # ==========================================================
+
+  open-webui:
+    image: ghcr.io/open-webui/open-webui:main
+    container_name: open-webui
+    restart: unless-stopped
+
+    depends_on:
+      - ollama
+
+    ports:
+      - "${OPENWEBUI_PORT:-3000}:8080"
+
+    environment:
+      OLLAMA_BASE_URL: http://ollama:11434
+
+      HF_HOME: /models/cache/huggingface
+      HF_HUB_CACHE: /models/cache/huggingface
+      TRANSFORMERS_CACHE: /models/cache/huggingface
+
+    volumes:
+      - ${AI_ROOT:-/opt/ai}/open-webui:/app/backend/data
+      - ${MODELS_ROOT:-/opt/ai-models}:/models
+
+  # ==========================================================
+  # PORTAINER
+  # ==========================================================
+
+  portainer:
+    image: portainer/portainer-ce:latest
+    container_name: portainer
+    restart: unless-stopped
+
+    ports:
+      - "${PORTAINER_HTTP_PORT:-9000}:9000"
+      - "${PORTAINER_HTTPS_PORT:-9443}:9443"
+      - "${PORTAINER_EDGE_PORT:-8000}:8000"
+
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ${AI_ROOT:-/opt/ai}/portainer:/data
